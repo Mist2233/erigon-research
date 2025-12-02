@@ -220,3 +220,85 @@ func TestLRUHitRefresh(t *testing.T) {
 	assert.Equal(t, addr1, sdb.lruList.Front().Value.(common.Address))
 	assert.Equal(t, addr2, sdb.lruList.Back().Value.(common.Address))
 }
+
+// TestPreloadHotContracts verifies that hot contracts are preloaded into cache
+func TestPreloadHotContracts(t *testing.T) {
+	reader := &MockStateReader{
+		accounts: make(map[common.Address]*accounts.Account),
+	}
+
+	// Create mock accounts for all hot addresses
+	for i, addr := range HotAddresses {
+		reader.accounts[addr] = &accounts.Account{
+			Nonce:   uint64(i + 1),
+			Balance: *uint256.NewInt(uint64((i + 1) * 1000)),
+		}
+	}
+
+	// Create state DB - PreloadHotContracts should be called in New()
+	sdb := New(reader)
+
+	// Verify that all hot addresses are in stateObjects cache
+	for _, addr := range HotAddresses {
+		obj, exists := sdb.stateObjects[addr]
+		assert.True(t, exists, "Hot address %s should be in cache after New()", addr.Hex())
+		if exists {
+			assert.NotNil(t, obj, "State object for hot address %s should not be nil", addr.Hex())
+		}
+	}
+
+	// Verify LRU list contains the hot addresses
+	assert.GreaterOrEqual(t, sdb.lruList.Len(), len(HotAddresses),
+		"LRU list should contain at least %d hot addresses", len(HotAddresses))
+}
+
+// TestPreloadHotContractsAfterReset verifies that hot contracts are re-preloaded after Reset
+func TestPreloadHotContractsAfterReset(t *testing.T) {
+	reader := &MockStateReader{
+		accounts: make(map[common.Address]*accounts.Account),
+	}
+
+	// Create mock accounts for all hot addresses
+	for i, addr := range HotAddresses {
+		reader.accounts[addr] = &accounts.Account{
+			Nonce:   uint64(i + 1),
+			Balance: *uint256.NewInt(uint64((i + 1) * 1000)),
+		}
+	}
+
+	// Create state DB
+	sdb := New(reader)
+
+	// Verify hot addresses are loaded
+	initialCount := len(sdb.stateObjects)
+	assert.GreaterOrEqual(t, initialCount, len(HotAddresses))
+
+	// Reset the state
+	sdb.Reset()
+
+	// Verify that hot addresses are re-loaded after reset
+	for _, addr := range HotAddresses {
+		obj, exists := sdb.stateObjects[addr]
+		assert.True(t, exists, "Hot address %s should be in cache after Reset()", addr.Hex())
+		if exists {
+			assert.NotNil(t, obj, "State object for hot address %s should not be nil", addr.Hex())
+		}
+	}
+}
+
+// TestPreloadHotContractsWithNilReader ensures PreloadHotContracts handles nil reader gracefully
+func TestPreloadHotContractsWithNilReader(t *testing.T) {
+	// Create state with nil reader
+	sdb := &IntraBlockState{
+		stateReader:       nil,
+		stateObjects:      map[common.Address]*stateObject{},
+		stateObjectsDirty: map[common.Address]struct{}{},
+		nilAccounts:       map[common.Address]struct{}{},
+	}
+
+	// Should not panic
+	sdb.PreloadHotContracts()
+
+	// Should have no state objects loaded
+	assert.Equal(t, 0, len(sdb.stateObjects))
+}
