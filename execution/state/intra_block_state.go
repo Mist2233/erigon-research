@@ -160,6 +160,8 @@ func New(stateReader StateReader) *IntraBlockState {
 
 // PreloadHotContracts preloads the top hot contracts into the cache to eliminate
 // cold-start DB I/O latency. This method is called during initialization and reset.
+// Errors during prefetching are silently ignored since this is a best-effort optimization;
+// the state objects will be loaded on-demand if prefetching fails.
 func (s *IntraBlockState) PreloadHotContracts() {
 	// Safety check: ensure DB is available
 	if s.stateReader == nil {
@@ -168,10 +170,12 @@ func (s *IntraBlockState) PreloadHotContracts() {
 
 	for _, addr := range HotAddresses {
 		// 1. Load Account State (Nonce, Balance) by accessing getStateObject
-		s.getStateObject(addr)
+		// Errors are ignored - prefetching is best-effort optimization
+		_, _ = s.getStateObject(addr)
 
 		// 2. Load Bytecode (Crucial for execution)
-		s.GetCode(addr)
+		// Errors are ignored - prefetching is best-effort optimization
+		_, _ = s.GetCode(addr)
 	}
 }
 
