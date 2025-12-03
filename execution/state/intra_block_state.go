@@ -38,7 +38,6 @@ import (
 	"github.com/erigontech/erigon/common/crypto"
 	"github.com/erigontech/erigon/common/dbg"
 	"github.com/erigontech/erigon/common/empty"
-	"github.com/erigontech/erigon/common/log/v3"
 	"github.com/erigontech/erigon/common/u256"
 	"github.com/erigontech/erigon/execution/chain"
 	"github.com/erigontech/erigon/execution/commitment/trie"
@@ -49,6 +48,24 @@ import (
 )
 
 var _ evmtypes.IntraBlockState = new(IntraBlockState) // compile-time interface-check
+
+// HotAddresses lists the top ten mainnet contracts from the workload analysis that we prefetch.
+// EnablePrefetch toggles the static prefetching behavior. Set to `true` to enable.
+// Change to `false` to quickly disable prefetching at runtime.
+var EnablePrefetch = true
+
+var HotAddresses = []common.Address{
+	common.HexToAddress("0xe468D26721b703D224d05563cB64746A7A40E1F4"),
+	common.HexToAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
+	common.HexToAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7"),
+	common.HexToAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+	common.HexToAddress("0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"),
+	common.HexToAddress("0xE592427A0AEce92De3Edee1F18E0157C05861564"),
+	common.HexToAddress("0x1F98431c8aD98523631AE4a59f267346ea31F984"),
+	common.HexToAddress("0x6B175474E89094C44Da98b954EedeAC495271d0F"),
+	common.HexToAddress("0xD533a949740bb3306d119CC777fa900bA034cd52"),
+	common.HexToAddress("0xBA12222222228d8Ba445958a75a0704d566BF2C8"),
+}
 
 type revision struct {
 	id           int
@@ -127,7 +144,7 @@ const MaxStateObjectsCacheSize = 10000
 
 // Create a new state from a given trie
 func New(stateReader StateReader) *IntraBlockState {
-	return &IntraBlockState{
+	state := &IntraBlockState{
 		stateReader:       stateReader,
 		stateObjects:      map[common.Address]*stateObject{},
 		stateObjectsDirty: map[common.Address]struct{}{},
@@ -143,6 +160,8 @@ func New(stateReader StateReader) *IntraBlockState {
 		trace:             false,
 		dep:               UnknownDep,
 	}
+	state.PreloadHotContracts()
+	return state
 }
 
 func NewWithVersionMap(stateReader StateReader, mvhm *VersionMap) *IntraBlockState {
@@ -332,6 +351,25 @@ func (sdb *IntraBlockState) Reset() {
 	sdb.codeReadDuration = 0
 	sdb.codeReadCount = 0
 	sdb.dep = UnknownDep
+	sdb.PreloadHotContracts()
+}
+
+// PreloadHotContracts ensures a handful of hot contracts are cached before execution begins.
+func (sdb *IntraBlockState) PreloadHotContracts() {
+	if !EnablePrefetch || sdb.stateReader == nil {
+		return
+	}
+	for _, addr := range HotAddresses {
+		if _, err := sdb.GetBalance(addr); err != nil {
+			continue
+		}
+		if _, err := sdb.GetNonce(addr); err != nil {
+			continue
+		}
+		if _, err := sdb.GetCode(addr); err != nil {
+			continue
+		}
+	}
 }
 
 func (sdb *IntraBlockState) AddLog(log *types.Log) {
